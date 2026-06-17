@@ -4,9 +4,9 @@ import sqlite3
 import plotly.express as px
 
 # ======================
-# PAGE CONFIG
+# PAGE
 # ======================
-st.set_page_config(page_title="Müştəri Dashboard", layout="wide")
+st.set_page_config(page_title="Dashboard", layout="wide")
 
 # ======================
 # DB
@@ -14,6 +14,7 @@ st.set_page_config(page_title="Müştəri Dashboard", layout="wide")
 conn = sqlite3.connect("data.db", check_same_thread=False)
 c = conn.cursor()
 
+# TABLES
 c.execute("""
 CREATE TABLE IF NOT EXISTS sales (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -22,23 +23,34 @@ CREATE TABLE IF NOT EXISTS sales (
     musteri INTEGER
 )
 """)
+
+c.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE,
+    password TEXT,
+    role TEXT
+)
+""")
+
 conn.commit()
 
 # ======================
-# SESSION STATE
+# DEFAULT ADMIN
+# ======================
+c.execute("SELECT * FROM users WHERE username='admin'")
+if not c.fetchone():
+    c.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+              ("admin", "1234", "admin"))
+    conn.commit()
+
+# ======================
+# SESSION
 # ======================
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.user = None
     st.session_state.role = None
-
-# ======================
-# USERS
-# ======================
-USERS = {
-    "admin": {"password": "1234", "role": "admin"},
-    "user": {"password": "1111", "role": "viewer"}
-}
 
 # ======================
 # LOGIN
@@ -50,13 +62,18 @@ def login():
     p = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        if u in USERS and USERS[u]["password"] == p:
+        user = c.execute(
+            "SELECT role FROM users WHERE username=? AND password=?",
+            (u, p)
+        ).fetchone()
+
+        if user:
             st.session_state.logged_in = True
             st.session_state.user = u
-            st.session_state.role = USERS[u]["role"]
+            st.session_state.role = user[0]
             st.rerun()
         else:
-            st.error("Yanlış login")
+            st.error("Login səhvdir")
 
 if not st.session_state.logged_in:
     login()
@@ -90,9 +107,13 @@ if st.session_state.role == "admin":
 
     st.sidebar.subheader("🛠 Admin Panel")
 
-    tab1, tab2, tab3 = st.tabs(["➕ Əlavə et", "✏️ Redaktə et", "🗑 Sil"])
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "➕ Data", "✏️ Edit", "🗑 Delete", "👤 Users"
+    ])
 
-    # ADD
+    # ======================
+    # ADD DATA
+    # ======================
     with tab1:
         magaza = st.text_input("Mağaza")
         tarix = st.date_input("Tarix")
@@ -104,10 +125,12 @@ if st.session_state.role == "admin":
                 (magaza, str(tarix), musteri)
             )
             conn.commit()
-            st.success("Əlavə olundu!")
+            st.success("Data əlavə olundu!")
             st.rerun()
 
+    # ======================
     # EDIT
+    # ======================
     with tab2:
         if not df.empty:
             selected_id = st.selectbox("ID seç", df["ID"])
@@ -120,8 +143,8 @@ if st.session_state.role == "admin":
             if st.button("Yenilə"):
                 c.execute("""
                     UPDATE sales
-                    SET magaz = ?, tarix = ?, musteri = ?
-                    WHERE id = ?
+                    SET magaz=?, tarix=?, musteri=?
+                    WHERE id=?
                 """, (new_magaza, str(new_tarix), new_musteri, selected_id))
 
                 conn.commit()
@@ -130,18 +153,42 @@ if st.session_state.role == "admin":
         else:
             st.info("Data yoxdur")
 
+    # ======================
     # DELETE
+    # ======================
     with tab3:
         if not df.empty:
             del_id = st.selectbox("Sil ID", df["ID"])
 
             if st.button("Sil"):
-                c.execute("DELETE FROM sales WHERE id = ?", (del_id,))
+                c.execute("DELETE FROM sales WHERE id=?", (del_id,))
                 conn.commit()
                 st.warning("Silindi!")
                 st.rerun()
         else:
             st.info("Data yoxdur")
+
+    # ======================
+    # USERS (BAX BURA QAYITDI!)
+    # ======================
+    with tab4:
+        st.subheader("👤 İstifadəçi əlavə et")
+
+        new_user = st.text_input("Username")
+        new_pass = st.text_input("Password")
+        role = st.selectbox("Role", ["admin", "viewer"])
+
+        if st.button("User əlavə et"):
+            try:
+                c.execute(
+                    "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+                    (new_user, new_pass, role)
+                )
+                conn.commit()
+                st.success("User əlavə olundu!")
+                st.rerun()
+            except:
+                st.error("Bu username artıq var!")
 
 # ======================
 # FILTER
@@ -159,22 +206,21 @@ else:
     filtered = df
 
 # ======================
-# DASHBOARD SAFETY CHECK
+# DASHBOARD
 # ======================
-st.title("📊 Müştəri Dashboard")
+st.title("📊 Dashboard")
 
 if filtered.empty:
     st.warning("Data yoxdur")
     st.stop()
 
-# ======================
-# KPI (SAFE FIX)
-# ======================
+c1, c2, c3 = st.columns(3)
+
+c1.metric("Ümumi", int(filtered["Müştəri sayı"].sum()))
+c2.metric("Orta", round(filtered["Müştəri sayı"].mean(), 2))
 total = filtered["Müştəri sayı"].sum()
 avg = filtered["Müştəri sayı"].mean()
 max_val = filtered["Müştəri sayı"].max()
-
-c1, c2, c3 = st.columns(3)
 
 c1.metric("Ümumi", int(total) if pd.notna(total) else 0)
 c2.metric("Orta", round(avg, 2) if pd.notna(avg) else 0)
@@ -182,9 +228,6 @@ c3.metric("Max", int(max_val) if pd.notna(max_val) else 0)
 
 st.divider()
 
-# ======================
-# CHART
-# ======================
 fig = px.line(
     filtered,
     x="Tarix",
@@ -195,8 +238,4 @@ fig = px.line(
 
 st.plotly_chart(fig, use_container_width=True)
 
-# ======================
-# TABLE
-# ======================
-st.subheader("📋 Data")
 st.dataframe(filtered, use_container_width=True)
