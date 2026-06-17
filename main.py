@@ -3,7 +3,45 @@ import pandas as pd
 import plotly.express as px
 import sqlite3
 import os
+# ======================
+# TEMP EXCEL → DB IMPORT (1 TIME ONLY)
+# ======================
+import pandas as pd
+import sqlite3
+import os
 
+if not os.path.exists("data.db"):
+    excel_file = "hesabat.xlsx"
+
+    df = pd.read_excel(excel_file)
+    df.columns = df.columns.str.strip()
+
+    conn = sqlite3.connect("data.db")
+    c = conn.cursor()
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS sales (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        magaz TEXT,
+        tarix TEXT,
+        musteri INTEGER
+    )
+    """)
+
+    for _, row in df.iterrows():
+        c.execute("""
+            INSERT INTO sales (magaz, tarix, musteri)
+            VALUES (?, ?, ?)
+        """, (
+            row["Mağaza"],
+            str(row["Tarix"]),
+            int(row["Müştəri sayı"]) if pd.notna(row["Müştəri sayı"]) else 0
+        ))
+
+    conn.commit()
+    conn.close()
+
+    print("Excel → DB import tamamlandı!")
 # ======================
 # DATABASE SETUP
 # ======================
