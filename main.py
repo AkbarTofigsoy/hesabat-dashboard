@@ -1,8 +1,120 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import sqlite3
 import os
 
+# ======================
+# DATABASE SETUP
+# ======================
+conn = sqlite3.connect("users.db", check_same_thread=False)
+c = conn.cursor()
+
+c.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    username TEXT PRIMARY KEY,
+    password TEXT,
+    role TEXT
+)
+""")
+conn.commit()
+
+# ======================
+# DEFAULT ADMIN (ilk açılış üçün)
+# ======================
+c.execute("SELECT * FROM users WHERE username='admin'")
+if not c.fetchone():
+    c.execute("INSERT INTO users VALUES ('admin','2211','admin')")
+    conn.commit()
+
+# ======================
+# SESSION INIT
+# ======================
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+    st.session_state.user = None
+    st.session_state.role = None
+
+# ======================
+# LOGIN FUNCTION
+# ======================
+def login():
+    st.title("🔐 Dashboard Login")
+
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+
+    if st.button("Login"):
+        c.execute("SELECT * FROM users WHERE username=? AND password=?", (username, password))
+        user = c.fetchone()
+
+        if user:
+            st.session_state.logged_in = True
+            st.session_state.user = user[0]
+            st.session_state.role = user[2]
+            st.rerun()
+        else:
+            st.error("Yanlış login")
+
+# ======================
+# USER MANAGEMENT (ADMIN PANEL)
+# ======================
+def admin_panel():
+    st.sidebar.subheader("👑 Admin Panel")
+
+    new_user = st.sidebar.text_input("Yeni user")
+    new_pass = st.sidebar.text_input("Password")
+    new_role = st.sidebar.selectbox("Role", ["admin", "manager", "viewer"])
+
+    if st.sidebar.button("➕ User yarat"):
+        try:
+            c.execute("INSERT INTO users VALUES (?,?,?)", (new_user, new_pass, new_role))
+            conn.commit()
+            st.sidebar.success("User yaradıldı")
+        except:
+            st.sidebar.error("User artıq var")
+
+    st.sidebar.divider()
+
+    st.sidebar.subheader("👥 Userlər")
+    users = c.execute("SELECT username, role FROM users").fetchall()
+    for u in users:
+        st.sidebar.write(f"{u[0]} → {u[1]}")
+
+# ======================
+# LOGIN CHECK
+# ======================
+if not st.session_state.logged_in:
+    login()
+    st.stop()
+
+# ======================
+# LOGGED IN HEADER
+# ======================
+st.sidebar.success(f"👤 {st.session_state.user}")
+st.sidebar.info(f"🔑 {st.session_state.role}")
+
+if st.sidebar.button("Logout"):
+    st.session_state.logged_in = False
+    st.session_state.user = None
+    st.session_state.role = None
+    st.rerun()
+
+# ======================
+# ADMIN ACCESS
+# ======================
+if st.session_state.role == "admin":
+    admin_panel()
+
+# ======================
+# DASHBOARD CONTENT (SƏNİN KODUN BURADA OLACAQ)
+# ======================
+
+# Example lock by role
+if st.session_state.role != "viewer":
+    st.success("📈 Analitika bölməsi aktivdir")
+else:
+    st.warning("Siz yalnız baxış hüququna maliksiniz")
 # ======================
 # PAGE SETUP
 # ======================
