@@ -1,72 +1,31 @@
 import streamlit as st
 import pandas as pd
+import sqlite3
 import plotly.express as px
-import sqlite3
-import os
+
 # ======================
-# TEMP EXCEL → DB IMPORT (1 TIME ONLY)
+# PAGE CONFIG
 # ======================
-import pandas as pd
-import sqlite3
-import os
+st.set_page_config(page_title="Müştəri Dashboard", layout="wide")
 
-if not os.path.exists("data.db"):
-    excel_file = "hesabat.xlsx"
-
-    df = pd.read_excel(excel_file)
-    df.columns = df.columns.str.strip()
-
-    conn = sqlite3.connect("data.db")
-    c = conn.cursor()
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS sales (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        magaz TEXT,
-        tarix TEXT,
-        musteri INTEGER
-    )
-    """)
-
-    for _, row in df.iterrows():
-        c.execute("""
-            INSERT INTO sales (magaz, tarix, musteri)
-            VALUES (?, ?, ?)
-        """, (
-            row["Mağaza"],
-            str(row["Tarix"]),
-            int(row["Müştəri sayı"]) if pd.notna(row["Müştəri sayı"]) else 0
-        ))
-
-    conn.commit()
-    conn.close()
-
-    print("Excel → DB import tamamlandı!")
 # ======================
-# DATABASE SETUP
+# DB
 # ======================
-conn = sqlite3.connect("users.db", check_same_thread=False)
+conn = sqlite3.connect("data.db", check_same_thread=False)
 c = conn.cursor()
 
 c.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    username TEXT PRIMARY KEY,
-    password TEXT,
-    role TEXT
+CREATE TABLE IF NOT EXISTS sales (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    magaz TEXT,
+    tarix TEXT,
+    musteri INTEGER
 )
 """)
 conn.commit()
 
 # ======================
-# DEFAULT ADMIN (ilk açılış üçün)
-# ======================
-c.execute("SELECT * FROM users WHERE username='admin'")
-if not c.fetchone():
-    c.execute("INSERT INTO users VALUES ('admin','2211','admin')")
-    conn.commit()
-
-# ======================
-# SESSION INIT
+# SESSION STATE
 # ======================
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -74,172 +33,158 @@ if "logged_in" not in st.session_state:
     st.session_state.role = None
 
 # ======================
-# LOGIN FUNCTION
+# USERS
+# ======================
+USERS = {
+    "admin": {"password": "1234", "role": "admin"},
+    "user": {"password": "1111", "role": "viewer"}
+}
+
+# ======================
+# LOGIN
 # ======================
 def login():
-    st.title("🔐 Dashboard Login")
+    st.title("🔐 Login")
 
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
+    u = st.text_input("Username")
+    p = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        c.execute("SELECT * FROM users WHERE username=? AND password=?", (username, password))
-        user = c.fetchone()
-
-        if user:
+        if u in USERS and USERS[u]["password"] == p:
             st.session_state.logged_in = True
-            st.session_state.user = user[0]
-            st.session_state.role = user[2]
+            st.session_state.user = u
+            st.session_state.role = USERS[u]["role"]
             st.rerun()
         else:
             st.error("Yanlış login")
 
-# ======================
-# USER MANAGEMENT (ADMIN PANEL)
-# ======================
-def admin_panel():
-    st.sidebar.subheader("👑 Admin Panel")
-
-    new_user = st.sidebar.text_input("Yeni user")
-    new_pass = st.sidebar.text_input("Password")
-    new_role = st.sidebar.selectbox("Role", ["admin", "manager", "viewer"])
-
-    if st.sidebar.button("➕ User yarat"):
-        try:
-            c.execute("INSERT INTO users VALUES (?,?,?)", (new_user, new_pass, new_role))
-            conn.commit()
-            st.sidebar.success("User yaradıldı")
-        except:
-            st.sidebar.error("User artıq var")
-
-    st.sidebar.divider()
-
-    st.sidebar.subheader("👥 Userlər")
-    users = c.execute("SELECT username, role FROM users").fetchall()
-    for u in users:
-        st.sidebar.write(f"{u[0]} → {u[1]}")
-
-# ======================
-# LOGIN CHECK
-# ======================
 if not st.session_state.logged_in:
     login()
     st.stop()
 
 # ======================
-# LOGGED IN HEADER
+# SIDEBAR
 # ======================
 st.sidebar.success(f"👤 {st.session_state.user}")
-st.sidebar.info(f"🔑 {st.session_state.role}")
+st.sidebar.info(f"🔑 Role: {st.session_state.role}")
 
 if st.sidebar.button("Logout"):
     st.session_state.logged_in = False
-    st.session_state.user = None
-    st.session_state.role = None
     st.rerun()
-
-# ======================
-# ADMIN ACCESS
-# ======================
-if st.session_state.role == "admin":
-    admin_panel()
-
-# ======================
-# DASHBOARD CONTENT (SƏNİN KODUN BURADA OLACAQ)
-# ======================
-
-# Example lock by role
-if st.session_state.role != "viewer":
-    st.success("📈 Analitika bölməsi aktivdir")
-else:
-    st.warning("Siz yalnız baxış hüququna maliksiniz")
-# ======================
-# PAGE SETUP
-# ======================
-st.set_page_config(page_title="Müştəri Dashboard", layout="wide")
 
 # ======================
 # LOAD DATA
 # ======================
-BASE_DIR = os.path.dirname(__file__)
-file_path = os.path.join(BASE_DIR, "hesabat.xlsx")
+df = pd.read_sql("SELECT * FROM sales", conn)
 
-df = pd.read_excel(file_path)
-df.columns = df.columns.str.strip()
-
-df["Tarix"] = pd.to_datetime(df["Tarix"], dayfirst=True)
-df["Ay"] = df["Tarix"].dt.to_period("M").astype(str)
-
-# ======================
-# SIDEBAR
-# ======================
-st.sidebar.title("📊 Filter Panel")
-
-# Logo (old style)
-logo_path = os.path.join(BASE_DIR, "logo.png")
-if os.path.exists(logo_path):
-    st.sidebar.image(logo_path, use_container_width=True)
+if df.empty:
+    df = pd.DataFrame(columns=["ID", "Mağaza", "Tarix", "Müştəri sayı"])
+else:
+    df.columns = ["ID", "Mağaza", "Tarix", "Müştəri sayı"]
+    df["Tarix"] = pd.to_datetime(df["Tarix"], errors="coerce")
 
 # ======================
-# FILTER 1: MAĞAZA
+# ADMIN PANEL
 # ======================
-magaza = st.sidebar.multiselect(
-    "Mağaza seç",
-    df["Mağaza"].unique(),
-    default=df["Mağaza"].unique()
-)
+if st.session_state.role == "admin":
+
+    st.sidebar.subheader("🛠 Admin Panel")
+
+    tab1, tab2, tab3 = st.tabs(["➕ Əlavə et", "✏️ Redaktə et", "🗑 Sil"])
+
+    # ADD
+    with tab1:
+        magaza = st.text_input("Mağaza")
+        tarix = st.date_input("Tarix")
+        musteri = st.number_input("Müştəri sayı", min_value=0)
+
+        if st.button("Əlavə et"):
+            c.execute(
+                "INSERT INTO sales (magaz, tarix, musteri) VALUES (?, ?, ?)",
+                (magaza, str(tarix), musteri)
+            )
+            conn.commit()
+            st.success("Əlavə olundu!")
+            st.rerun()
+
+    # EDIT
+    with tab2:
+        if not df.empty:
+            selected_id = st.selectbox("ID seç", df["ID"])
+            row = df[df["ID"] == selected_id].iloc[0]
+
+            new_magaza = st.text_input("Mağaza", row["Mağaza"])
+            new_tarix = st.date_input("Tarix", pd.to_datetime(row["Tarix"]))
+            new_musteri = st.number_input("Müştəri sayı", value=int(row["Müştəri sayı"]))
+
+            if st.button("Yenilə"):
+                c.execute("""
+                    UPDATE sales
+                    SET magaz = ?, tarix = ?, musteri = ?
+                    WHERE id = ?
+                """, (new_magaza, str(new_tarix), new_musteri, selected_id))
+
+                conn.commit()
+                st.success("Yeniləndi!")
+                st.rerun()
+        else:
+            st.info("Data yoxdur")
+
+    # DELETE
+    with tab3:
+        if not df.empty:
+            del_id = st.selectbox("Sil ID", df["ID"])
+
+            if st.button("Sil"):
+                c.execute("DELETE FROM sales WHERE id = ?", (del_id,))
+                conn.commit()
+                st.warning("Silindi!")
+                st.rerun()
+        else:
+            st.info("Data yoxdur")
 
 # ======================
-# FILTER 2: AY
+# FILTER
 # ======================
-ay = st.sidebar.selectbox(
-    "Ay seç",
-    sorted(df["Ay"].unique())
-)
+st.sidebar.subheader("📊 Filter")
+
+if not df.empty:
+    magaza_filter = st.sidebar.multiselect(
+        "Mağaza",
+        df["Mağaza"].dropna().unique(),
+        default=df["Mağaza"].dropna().unique()
+    )
+    filtered = df[df["Mağaza"].isin(magaza_filter)]
+else:
+    filtered = df
 
 # ======================
-# FILTER 3: DATE RANGE
+# DASHBOARD SAFETY CHECK
 # ======================
-min_date = df["Tarix"].min()
-max_date = df["Tarix"].max()
+st.title("📊 Müştəri Dashboard")
 
-date_range = st.sidebar.date_input(
-    "Tarix aralığı seç",
-    value=(min_date, max_date)
-)
+if filtered.empty:
+    st.warning("Data yoxdur")
+    st.stop()
 
 # ======================
-# FILTER DATA
+# KPI (SAFE FIX)
 # ======================
-filtered = df[
-    (df["Mağaza"].isin(magaza)) &
-    (df["Ay"] == ay) &
-    (df["Tarix"] >= pd.to_datetime(date_range[0])) &
-    (df["Tarix"] <= pd.to_datetime(date_range[1]))
-]
+total = filtered["Müştəri sayı"].sum()
+avg = filtered["Müştəri sayı"].mean()
+max_val = filtered["Müştəri sayı"].max()
 
-# ======================
-# HEADER
-# ======================
-st.title("📊 Müştəri Analitika Dashboard")
-st.divider()
-
-# ======================
-# KPI CARDS
-# ======================
 c1, c2, c3 = st.columns(3)
 
-c1.metric("👥 Ümumi Müştəri", int(filtered["Müştəri sayı"].sum()))
-c2.metric("📊 Orta Günlük", round(filtered["Müştəri sayı"].mean(), 2))
-c3.metric("🔥 Max Gün", int(filtered["Müştəri sayı"].max()))
+c1.metric("Ümumi", int(total) if pd.notna(total) else 0)
+c2.metric("Orta", round(avg, 2) if pd.notna(avg) else 0)
+c3.metric("Max", int(max_val) if pd.notna(max_val) else 0)
 
 st.divider()
 
 # ======================
-# DAILY TREND
+# CHART
 # ======================
-st.subheader("📈 Günlük Trend")
-
 fig = px.line(
     filtered,
     x="Tarix",
@@ -251,38 +196,7 @@ fig = px.line(
 st.plotly_chart(fig, use_container_width=True)
 
 # ======================
-# STORE ANALYSIS
+# TABLE
 # ======================
-st.subheader("🏪 Mağaza Performansı")
-
-store = filtered.groupby("Mağaza")["Müştəri sayı"].sum().reset_index()
-
-fig2 = px.bar(
-    store,
-    x="Mağaza",
-    y="Müştəri sayı",
-    text="Müştəri sayı",
-    color="Mağaza"
-)
-
-st.plotly_chart(fig2, use_container_width=True)
-
-# ======================
-# TABLE VIEW
-# ======================
-st.subheader("📋 Detallı məlumat")
-
-st.dataframe(filtered)
-
-# ======================
-# INSIGHT BOX
-# ======================
-if not filtered.empty:
-    best = filtered.loc[filtered["Müştəri sayı"].idxmax()]
-
-    msg = (
-        f"📌 Ən güclü gün: {best['Tarix'].date()} | "
-        f"{best['Mağaza']} | {best['Müştəri sayı']} müştəri"
-    )
-
-    st.success(msg)
+st.subheader("📋 Data")
+st.dataframe(filtered, use_container_width=True)
